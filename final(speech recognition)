@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+# Smart Assistant with YOLOv8 Object Detection
+# For Raspberry Pi 5 (4GB RAM)
+
+import os
+import time
+import threading
+import queue
+import numpy as np
+import cv2
+from ultralytics import YOLO
+import speech_recognition as sr
+import pyttsx3
+from picamera2 import Picamera2
+
+class SmartAssistant:
+    def __init__(self):
+        """Initialize the smart assistant with camera, speech recognition, TTS, and YOLOv8."""
+        print("Initializing Smart Assistant...")
+        
+        # Initialize the Pi Camera
+        self.camera = Picamera2()
+        self.configure_camera()
+        
+        # Load YOLOv8 model (nano version for resource efficiency)
+        self.model = YOLO('yolov8n.pt')  # Using the nano model for efficiency
+        
+        # Initialize speech recognition
+        self.recognizer = sr.Recognizer()
+        self.mic = sr.Microphone()
+        
+        # Initialize text-to-speech engine
+        self.tts_engine = pyttsx3.init()
+        
+        # Set the trigger phrase
+        self.trigger_phrase = "what is this"
+        
+        # Thread-safe queue for communication between threads
+        self.detection_queue = queue.Queue(maxsize=1)
+        
+        # Flags for controlling threads
+        self.running = False
+        self.processing = False
+        
+        print("Smart Assistant initialized and ready!")
+
+    def configure_camera(self):
+        """Configure the Pi Camera with appropriate settings."""
+        config = self.camera.create_still_configuration(
+            main={"size": (640, 480)},
+            lores={"size": (320, 240)},
+            display="lores"
+        )
+        self.camera.configure(config)
+        self.camera.start()
+        # Allow camera to warm up
+        time.sleep(2)
+
+    def capture_frame(self):
+        """Capture a frame from the Pi Camera and return it."""
+        frame = self.camera.capture_array()
+        # Convert BGR to RGB (YOLOv8 expects RGB)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return frame, frame_rgb
+
+    def detect_objects(self, frame):
+        """Detect objects in the given frame using YOLOv8."""
+        results = self.model(frame, conf=0.25)  # Lower confidence threshold for better detection
+        
+        # Get the most confident detection
+        most_confident_detection = None
+        highest_conf = 0
+        
+        if len(results) > 0 and len(results[0].boxes) > 0:
+            for result in results[0].boxes:
+                conf = float(result.conf)
+                if conf > highest_conf:
+                    highest_conf = conf
+                    most_confident_detection = {
+                        'class': int(result.cls),
+                        'confidence': conf,
+                        'name': results[0].names[int(result.cls)]
+                    }
+        
+        return most_confident_detection
+
+    def speak_result(self, detection):
+        """Speak the detected object using TTS."""
+        if detection:
+            text = f"I see a {detection['name']} with {int(detection['confidence'] * 100)} percent confidence."
+        else:
+            text = "I don't recognize any objects."
+        
+        print(f"Speaking: {text}")
+        self.tts_engine.say(text)
+        self.tts_engine.runAndWait()
+
+    def listen_for_trigger(self):
+        """Listen for the trigger phrase using speech recognition."""
+        print("Listening for trigger phrase...")
+        
+        # Adjust for ambient noise
+        with self.mic as source:
+            self.recognizer.adjust_for_ambient_noise(source, duration=1)
+        
+        while self.running:
+            try:
+                with self.mic as source:
+                    audio = self.recognizer.listen(source, timeout=1.0, phrase_time_limit=5.0)
+                
+                try:
+                    # Use the SpeechRecognition library to convert audio to text
+                    text = self.recognizer.recognize_google(audio).lower()
+                    print(f"Recognized: {text}")
+                    
+                    # Check if trigger phrase is in the recognized text
+                    if self.trigger_phrase in text:
+                        print("Trigger phrase detected!")
+                        self.processing = True
+                        
+                        # Capture frame and put in queue for processing
+                        frame, frame_rgb = self.capture_frame()
+                        self.detection_queue.put(frame_rgb)
+                
+                except sr.UnknownValueError:
+                    # Speech not understood
+                    pass
+                except sr.RequestError as e:
+                    # Could not request results from service
+                    print(f"Could not request results; {e}")
+                    # Fallback to offline recognition could be implemented here
+            
+            except Exception as e:
+                print(f"Error in listen_for_trigger: {e}")
+                time.sleep(1)  # To prevent busy-waiting in case of repeated errors
+
+    def process_detections(self):
+        """Process frames from the queue and perform object detection."""
+        while self.running:
+            try:
+                if self.processing and not self.detection_queue.empty():
+                    # Get the frame from the queue
+                    frame_rgb = self.detection_queue.get(timeout=1)
+                    
+                    # Detect objects
+                    detection = self.detect_objects(frame_rgb)
+                    
+                    # Speak the result
+                    self.speak_result(detection)
+                    
+                    # Reset processing flag
+                    self.processing = False
+                    
+                    # Clear the queue if there are any remaining items
+                    with self.detection_queue.mutex:
+                        self.detection_queue.queue.clear()
+                
+                else:
+                    # Sleep to reduce CPU usage when idle
+                    time.sleep(0.1)
+            
+            except queue.Empty:
+                # Timeout, just continue
+                pass
+            except Exception as e:
+                print(f"Error in process_detections: {e}")
+                time.sleep(1)  # To prevent busy-waiting in case of repeated errors
+
+    def run(self):
+        """Run the smart assistant."""
+        self.running = True
+        
+        # Create and start the threads
+        listen_thread = threading.Thread(target=self.listen_for_trigger)
+        process_thread = threading.Thread(target=self.process_detections)
+        
+        listen_thread.daemon = True
+        process_thread.daemon = True
+        
+        listen_thread.start()
+        process_thread.start()
+        
+        print("Smart Assistant is running! Say 'what is this?' to detect objects.")
+        
+        try:
+            # Keep the main thread alive
+            while True:
+                time.sleep(0.1)
+        
+        except KeyboardInterrupt:
+            print("Shutting down...")
+            self.running = False
+            listen_thread.join(timeout=1)
+            process_thread.join(timeout=1)
+            self.camera.stop()
+            print("Smart Assistant stopped.")
+
+def main():
+    """Main function to create and run the smart assistant."""
+    assistant = SmartAssistant()
+    assistant.run()
+
+if __name__ == "__main__":
+    main()
