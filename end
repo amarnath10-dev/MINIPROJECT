@@ -1,0 +1,82 @@
+import cv2
+import pyttsx3
+import speech_recognition as sr
+from ultralytics import YOLO
+import time
+
+# Initialize TTS engine
+engine = pyttsx3.init()
+engine.setProperty('rate', 150)  # speaking speed
+
+# Load YOLOv8 model (use nano for speed on Raspberry Pi)
+model = YOLO("yolov8n.pt")  # You can also try yolov8s.pt if performance allows
+
+# Initialize Speech Recognizer
+recognizer = sr.Recognizer()
+mic = sr.Microphone()
+
+# Initialize Pi Camera
+cap = cv2.VideoCapture(0)
+
+def detect_and_speak(frame):
+    # Run object detection
+    results = model(frame)
+
+    # Parse the results
+    names = results[0].names
+    boxes = results[0].boxes
+    if boxes.shape[0] > 0:
+        top_box = boxes[0]
+        cls_id = int(top_box.cls[0])
+        label = names[cls_id]
+        print(f"Detected: {label}")
+
+        # Draw bounding box
+        coords = top_box.xyxy[0].cpu().numpy().astype(int)
+        x1, y1, x2, y2 = coords
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9, (0, 255, 0), 2)
+
+        # Speak detected label
+        engine.say(f"This is a {label}")
+        engine.runAndWait()
+    else:
+        engine.say("I can't see anything clearly")
+        engine.runAndWait()
+
+    # Show image with bounding box
+    cv2.imshow("Detected Object", frame)
+    cv2.waitKey(3000)  # Display for 3 seconds
+    cv2.destroyAllWindows()
+
+def listen_for_trigger():
+    with mic as source:
+        print("Listening for 'what is this?'...")
+        recognizer.adjust_for_ambient_noise(source)
+        audio = recognizer.listen(source, phrase_time_limit=5)
+
+        try:
+            text = recognizer.recognize_google(audio).lower()
+            print(f"You said: {text}")
+            return "what is this" in text
+        except sr.UnknownValueError:
+            return False
+        except sr.RequestError as e:
+            print(f"Speech recognition error: {e}")
+            return False
+
+# Main loop
+try:
+    while True:
+        triggered = listen_for_trigger()
+        if triggered:
+            print("Trigger phrase detected.")
+            ret, frame = cap.read()
+            if ret:
+                detect_and_speak(frame)
+        time.sleep(0.5)  # prevent CPU overuse
+except KeyboardInterrupt:
+    print("Exiting gracefully.")
+    cap.release()
+    cv2.destroyAllWindows()
