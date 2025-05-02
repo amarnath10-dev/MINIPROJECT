@@ -28,4 +28,39 @@ def detect_and_speak():
     if boxes.shape[0] > 0:
         top_box = boxes[0]
         conf_score = float(top_box.conf[0])
-        if
+        if conf_score >= 0.90:
+            cls_id = int(top_box.cls[0])
+            label = names[cls_id]
+            print(f"Detected: {label} (Confidence: {conf_score*100:.2f}%)")
+
+            coords = top_box.xyxy[0].cpu().numpy().astype(int)
+            x1, y1, x2, y2 = coords
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, f"{label} ({conf_score*100:.1f}%)", (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+            engine.say(f"This is a {label}")
+            engine.runAndWait()
+        else:
+            print(f"Low confidence: {conf_score*100:.2f}%. Skipping.")
+            engine.say("I'm not confident enough to say.")
+            engine.runAndWait()
+    else:
+        print("No object detected.")
+        engine.say("I can't see anything clearly")
+        engine.runAndWait()
+
+    cv2.imshow("Detected Object", frame)
+    cv2.waitKey(3000)
+    cv2.destroyAllWindows()
+
+# Main loop
+try:
+    while True:
+        input("\nPress Enter to capture...")
+        detect_and_speak()
+except KeyboardInterrupt:
+    print("\nExiting...")
+finally:
+    picam2.stop()
+    cv2.destroyAllWindows()
