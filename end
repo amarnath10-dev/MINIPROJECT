@@ -1,63 +1,56 @@
+from picamera2 import Picamera2
 import cv2
-import pyttsx3
 from ultralytics import YOLO
+import pyttsx3
 import time
 
-# Initialize TTS engine
+# Initialize text-to-speech engine
 engine = pyttsx3.init()
 engine.setProperty('rate', 150)
 
-# Load YOLOv8 model (nano version recommended for Raspberry Pi)
+# Load YOLOv8 (nano model recommended for Raspberry Pi)
 model = YOLO("yolov8n.pt")
 
-# Initialize Pi Camera
-cap = cv2.VideoCapture(0)
+# Initialize and start the Pi Camera
+picam2 = Picamera2()
+picam2.configure(picam2.create_preview_configuration(main={"format": "RGB888", "size": (640, 480)}))
+picam2.start()
 
-def detect_and_speak(frame):
-    # Run object detection
-    results = model(frame)
+# Short delay to let camera warm up
+time.sleep(2)
 
-    # Parse results
-    names = results[0].names
-    boxes = results[0].boxes
+# Capture a single frame
+frame = picam2.capture_array()
 
-    if boxes.shape[0] > 0:
-        top_box = boxes[0]
-        cls_id = int(top_box.cls[0])
-        label = names[cls_id]
-        print(f"Detected: {label}")
+# Run YOLO detection
+results = model(frame)
+names = results[0].names
+boxes = results[0].boxes
 
-        # Draw bounding box
-        coords = top_box.xyxy[0].cpu().numpy().astype(int)
-        x1, y1, x2, y2 = coords
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9, (0, 255, 0), 2)
+# Process results
+if boxes.shape[0] > 0:
+    top_box = boxes[0]
+    cls_id = int(top_box.cls[0])
+    label = names[cls_id]
+    print(f"Detected: {label}")
 
-        # Speak detected label
-        engine.say(f"This is a {label}")
-        engine.runAndWait()
-    else:
-        print("No clear object detected.")
-        engine.say("I can't see anything clearly")
-        engine.runAndWait()
+    # Draw bounding box
+    coords = top_box.xyxy[0].cpu().numpy().astype(int)
+    x1, y1, x2, y2 = coords
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                0.9, (0, 255, 0), 2)
 
-    # Show frame with bounding box
-    cv2.imshow("Detected Object", frame)
-    cv2.waitKey(3000)
-    cv2.destroyAllWindows()
+    # Speak detected object
+    engine.say(f"This is a {label}")
+    engine.runAndWait()
+else:
+    print("No object detected.")
+    engine.say("I can't see anything clearly")
+    engine.runAndWait()
 
-# Main
-try:
-    print("Capturing image from camera...")
-    time.sleep(1)  # brief delay to warm up camera
-    ret, frame = cap.read()
-    if ret:
-        detect_and_speak(frame)
-    else:
-        print("Failed to capture image from camera.")
-except KeyboardInterrupt:
-    print("Interrupted by user.")
-finally:
-    cap.release()
-    cv2.destroyAllWindows()
+# Show result
+cv2.imshow("Detected Object", frame)
+cv2.waitKey(3000)
+cv2.destroyAllWindows()
+picam2.stop()
