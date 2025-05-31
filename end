@@ -4,22 +4,18 @@ from ultralytics import YOLO
 import pyttsx3
 import time
 
-# Initialize TTS engine
+
 engine = pyttsx3.init()
 engine.setProperty('rate', 150)
 
-# Load YOLOv8 model
 model = YOLO("yolov8n.pt")
 
-# Start Pi Camera
 picam2 = Picamera2()
 picam2.configure(picam2.create_preview_configuration(main={"format": "RGB888", "size": (640, 480)}))
 picam2.start()
-time.sleep(2)  # Camera warm-up
+time.sleep(2)  
 
-print("Smart Assistant is running in real-time. Press Ctrl+C to exit.")
 
-# To track last spoken label and prevent repetition
 last_spoken = ""
 last_spoken_time = 0
 speak_interval = 5  # seconds
@@ -40,7 +36,7 @@ try:
                 coords = top_box.xyxy[0].cpu().numpy().astype(int)
                 x1, y1, x2, y2 = coords
 
-                # Draw bounding box and label
+                
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, f"{label} ({conf_score*100:.1f}%)", (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
@@ -57,7 +53,7 @@ try:
         else:
             print("No object detected.")
 
-        # Show video output with bounding box
+        
         cv2.imshow("Detected Object", frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
